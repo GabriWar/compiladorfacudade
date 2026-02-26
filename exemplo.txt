@@ -1,0 +1,13 @@
+BEGIN
+  a = 3
+  b = 0
+
+  WHILE a DO
+    b = b + a
+    a = a - 1
+  ENDWHILE
+
+  IF b THEN
+    c = b
+  ENDIF
+END
