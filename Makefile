@@ -1,16 +1,20 @@
 CXX      = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -O2
 
-.PHONY: all clean run
+.PHONY: all clean run test
 
 all: compiler
 
 compiler: compiler.cpp
 	$(CXX) $(CXXFLAGS) -o compiler compiler.cpp
 
-# Compila e roda o exemplo do PDF
+# Roda sem argumentos (usa programa embutido)
 run: compiler
-	./compiler exemplo.wn saida.mem
+	./compiler
+
+# Roda com o arquivo de exemplo
+test: compiler
+	./compiler exemplo.wn
 
 clean:
-	rm -f compiler saida.mem
+	rm -f compiler teste.mem exemplo.mem saida.mem

@@ -327,32 +327,7 @@ public:
     // Exporta a imagem de memoria como arquivo texto (256 linhas: "endereco valor")
     void exportarMemoria(const std::string& arquivo,
                          const TabelaDeSimbolos& tabela) const {
-        const std::unordered_map<std::string, int> opcodes = {
-            {"STORE", 0x10}, {"LOAD", 0x20}, {"ADD", 0x30},
-            {"SUB",   0x40}, {"JMP",  0x80}, {"JZ",  0xA0},
-            {"HALT",  0xF0}
-        };
-
-        std::unordered_map<std::string, int> mapaRotulos;
-        int addr = 0;
-        for (auto& i : instrucoes) {
-            for (auto& r : i.rotulos)
-                mapaRotulos[r] = addr;
-            addr += (i.mnemonico == "HALT") ? 1 : 2;
-        }
-
-        std::vector<int> mem(256, 0);
-        addr = 0;
-        for (auto& i : instrucoes) {
-            mem[addr++] = opcodes.at(i.mnemonico);
-            if (i.mnemonico != "HALT")
-                mem[addr++] = resolverOperando(i.operando, mapaRotulos);
-        }
-        for (auto& [nome, daddr] : tabela.getVars())
-            if (daddr < 256) mem[daddr] = 0;
-        for (auto& [val, daddr] : tabela.getConsts())
-            if (daddr < 256) mem[daddr] = val;
-
+        std::vector<int> mem = construirMemoria(tabela);
         std::ofstream f(arquivo);
         if (!f) {
             std::cerr << "Aviso: nao foi possivel criar '" << arquivo << "'\n";
@@ -360,8 +335,149 @@ public:
         }
         for (int i = 0; i < 256; i++)
             f << i << " " << mem[i] << "\n";
+        std::cout << "Imagem de memoria:  " << arquivo << "\n";
+    }
 
-        std::cout << "\nImagem de memoria exportada para: " << arquivo << "\n";
+    // Gera um binario nativo que simula a execucao WNEANDER com trace verbose.
+    // Estrategia: gera um .cpp com a memoria embutida + interpretador, depois
+    // chama g++ para compilar. O .cpp intermediario e removido no final.
+    void gerarSimulador(const std::string& nomeExec,
+                        const TabelaDeSimbolos& tabela) const {
+        std::vector<int> mem = construirMemoria(tabela);
+
+        std::string cppFile = nomeExec + ".sim.cpp";
+        std::ofstream f(cppFile);
+        if (!f) {
+            std::cerr << "Aviso: nao foi possivel gerar simulador\n";
+            return;
+        }
+
+        // --- Cabecalho ---
+        f << "#include <iostream>\n"
+          << "#include <iomanip>\n"
+          << "#include <string>\n"
+          << "#include <map>\n\n"
+          << "int main() {\n";
+
+        // --- Memoria embutida ---
+        f << "    int mem[256] = {};\n";
+        for (int i = 0; i < 256; i++)
+            if (mem[i] != 0)
+                f << "    mem[" << i << "] = " << mem[i] << ";\n";
+        f << "\n";
+
+        // --- Tabela de simbolos embutida (para nomes legiveis) ---
+        f << "    std::map<int,std::string> vars = {\n";
+        for (auto& [nome, addr] : tabela.getVars())
+            f << "        {" << addr << ", \"" << nome << "\"},\n";
+        for (auto& [val, addr] : tabela.getConsts())
+            f << "        {" << addr << ", \"CONST_" << val << "\"},\n";
+        f << "    };\n\n";
+
+        // --- Corpo do interpretador WNEANDER (escrito como string literal) ---
+        f << R"WNSIM(
+    auto nomVar = [&](int a) -> std::string {
+        return vars.count(a) ? vars[a] : ("MEM[" + std::to_string(a) + "]");
+    };
+    auto nomeOp = [](int opc) -> std::string {
+        switch(opc) {
+            case 0x10: return "STORE";
+            case 0x20: return "LOAD";
+            case 0x30: return "ADD";
+            case 0x40: return "SUB";
+            case 0x80: return "JMP";
+            case 0xA0: return "JZ";
+            case 0xF0: return "HALT";
+            default:   return "???";
+        }
+    };
+
+    int acc = 0, pc = 0, step = 0;
+
+    std::cout << "\n================================================\n";
+    std::cout << "   SIMULADOR WNEANDER — execucao verbose\n";
+    std::cout << "================================================\n\n";
+    std::cout << std::left
+              << std::setw(6)  << "PC"
+              << std::setw(8)  << "Instr"
+              << std::setw(6)  << "Op"
+              << std::setw(8)  << "ACC"
+              << "Acao\n";
+    std::cout << std::string(52, '-') << "\n";
+
+    while (step++ < 100000) {
+        int opc = mem[pc];
+        bool temOp = (opc != 0xF0);
+        int  op    = temOp ? mem[pc + 1] : 0;
+
+        std::cout << std::setw(6) << pc
+                  << std::setw(8) << nomeOp(opc);
+        if (temOp) std::cout << std::setw(6) << op;
+        else       std::cout << std::setw(6) << "";
+        std::cout << std::setw(8) << acc;
+
+        if (opc == 0xF0) { std::cout << "HALT\n"; break; }
+
+        switch(opc) {
+        case 0x20: { // LOAD
+            int v = mem[op];
+            std::cout << "ACC = " << nomVar(op) << " = " << v << "\n";
+            acc = v; pc += 2; break;
+        }
+        case 0x10: { // STORE
+            mem[op] = acc;
+            std::cout << nomVar(op) << " = " << acc << "\n";
+            pc += 2; break;
+        }
+        case 0x30: { // ADD
+            int v = mem[op];
+            std::cout << "ACC = " << acc << " + " << nomVar(op)
+                      << "(" << v << ") = " << (acc + v) << "\n";
+            acc += v; pc += 2; break;
+        }
+        case 0x40: { // SUB
+            int v = mem[op];
+            std::cout << "ACC = " << acc << " - " << nomVar(op)
+                      << "(" << v << ") = " << (acc - v) << "\n";
+            acc -= v; pc += 2; break;
+        }
+        case 0x80: // JMP
+            std::cout << "PC -> " << op << "\n";
+            pc = op; break;
+        case 0xA0: // JZ
+            if (acc == 0) {
+                std::cout << "ACC=0, PC -> " << op << "\n";
+                pc = op;
+            } else {
+                std::cout << "ACC=" << acc << ", nao salta\n";
+                pc += 2;
+            }
+            break;
+        default:
+            std::cout << "instrucao desconhecida (opc=" << opc << ")\n";
+            return 1;
+        }
+    }
+
+    std::cout << "\n--- Estado final das variaveis ---\n";
+    for (auto& [a, n] : vars)
+        if (n.rfind("CONST", 0) != 0)
+            std::cout << n << " = " << mem[a] << "\n";
+    std::cout << "\n";
+    return 0;
+}
+)WNSIM";
+
+        f.close();
+
+        // Compila o simulador gerado
+        std::string cmd = "g++ -std=c++17 -O2 -o " + nomeExec + " " + cppFile;
+        if (system(cmd.c_str()) == 0) {
+            std::remove(cppFile.c_str());
+            std::cout << "Simulador gerado:  " << nomeExec << "\n";
+        } else {
+            std::cerr << "Aviso: falha ao compilar simulador (g++ nao encontrado?)\n";
+        }
     }
 
 private:
@@ -369,11 +485,34 @@ private:
     std::vector<std::string> pendentes;
     int contadorRotulos;
 
+    // Constroi o array de 256 bytes com instrucoes + dados
+    std::vector<int> construirMemoria(const TabelaDeSimbolos& tabela) const {
+        const std::unordered_map<std::string, int> opcodes = {
+            {"STORE", 0x10}, {"LOAD", 0x20}, {"ADD", 0x30},
+            {"SUB",   0x40}, {"JMP",  0x80}, {"JZ",  0xA0},
+            {"HALT",  0xF0}
+        };
+        std::unordered_map<std::string, int> mapaRotulos;
+        int addr = 0;
+        for (auto& i : instrucoes) {
+            for (auto& r : i.rotulos) mapaRotulos[r] = addr;
+            addr += (i.mnemonico == "HALT") ? 1 : 2;
+        }
+        std::vector<int> mem(256, 0);
+        addr = 0;
+        for (auto& i : instrucoes) {
+            mem[addr++] = opcodes.at(i.mnemonico);
+            if (i.mnemonico != "HALT")
+                mem[addr++] = resolverOperando(i.operando, mapaRotulos);
+        }
+        for (auto& [nome, daddr] : tabela.getVars())   if (daddr < 256) mem[daddr] = 0;
+        for (auto& [val,  daddr] : tabela.getConsts()) if (daddr < 256) mem[daddr] = val;
+        return mem;
+    }
+
     static int resolverOperando(const std::string& op,
                                 const std::unordered_map<std::string, int>& mapa) {
-        // Tenta interpretar como inteiro direto
         try { return std::stoi(op); } catch (...) {}
-        // Tenta como rotulo simbolico
         auto it = mapa.find(op);
         if (it != mapa.end()) return it->second;
         throw std::runtime_error("Operando nao resolvido: '" + op + "'");
@@ -556,37 +695,72 @@ private:
 // SECAO 5: PROGRAMA PRINCIPAL
 // =============================================================
 
+// Programa de teste embutido (exemplo do PDF)
+static const std::string PROGRAMA_TESTE = R"(BEGIN
+  a = 3
+  b = 0
+  WHILE a DO
+    b = b + a
+    a = a - 1
+  ENDWHILE
+  IF b THEN
+    c = b
+  ENDIF
+END
+)";
+
+// Extrai o nome base do arquivo sem extensao e sem diretorio
+// Ex: "/home/user/meu_prog.wn" -> "meu_prog"
+static std::string nomeBase(const std::string& caminho) {
+    size_t barra = caminho.find_last_of("/\\");
+    std::string nome = (barra == std::string::npos) ? caminho : caminho.substr(barra + 1);
+    size_t ponto = nome.rfind('.');
+    if (ponto != std::string::npos) nome = nome.substr(0, ponto);
+    return nome.empty() ? "saida" : nome;
+}
+
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        std::cerr << "Uso: " << argv[0] << " <arquivo.wn> [saida.mem]\n";
-        std::cerr << "Exemplo: " << argv[0] << " exemplo.wn saida.mem\n";
-        return 1;
+    std::string fonte;
+    std::string nomeArquivo;
+    std::string arquivoSaida;
+
+    std::string nomeExec;   // nome do binario simulador gerado
+
+    if (argc >= 2) {
+        // Modo normal: arquivo passado como argumento (ou via drag-and-drop)
+        nomeArquivo = argv[1];
+        std::ifstream arqFonte(nomeArquivo);
+        if (!arqFonte) {
+            std::cerr << "Erro: nao foi possivel abrir '" << nomeArquivo << "'\n";
+            return 1;
+        }
+        std::stringstream ss;
+        ss << arqFonte.rdbuf();
+        fonte       = ss.str();
+        nomeExec    = nomeBase(nomeArquivo);
+        arquivoSaida = nomeExec + ".mem";
+    } else {
+        // Sem argumentos: compila o programa de teste embutido
+        fonte        = PROGRAMA_TESTE;
+        nomeArquivo  = "<teste embutido>";
+        nomeExec     = "teste";
+        arquivoSaida = "teste.mem";
     }
 
-    std::ifstream arqFonte(argv[1]);
-    if (!arqFonte) {
-        std::cerr << "Erro: nao foi possivel abrir '" << argv[1] << "'\n";
-        return 1;
-    }
-
-    std::stringstream ss;
-    ss << arqFonte.rdbuf();
-    std::string fonteOriginal = ss.str();
 
     const int W = 52;
     std::cout << "\n" << std::string(W, '=') << "\n";
     std::cout << "    COMPILADOR HIPOTETICO -> WNEANDER\n";
     std::cout << "    Disciplina: Compiladores\n";
     std::cout << std::string(W, '=') << "\n";
+    std::cout << "\n=== CODIGO FONTE (" << nomeArquivo << ") ===\n";
+    std::cout << fonte << "\n";
 
-    std::cout << "\n=== CODIGO FONTE (" << argv[1] << ") ===\n";
-    std::cout << fonteOriginal << "\n";
+    int codigoRetorno = 0;
 
     try {
-        // --------------------------------------------------
         // FASE 1: Analise Lexica
-        // --------------------------------------------------
-        AnalisadorLexico lexer(fonteOriginal);
+        AnalisadorLexico lexer(fonte);
         std::vector<Token> tokens = lexer.tokenizar();
 
         std::cout << "\n" << std::string(W, '=') << "\n";
@@ -605,30 +779,26 @@ int main(int argc, char* argv[]) {
         }
         std::cout << std::string(W, '=') << "\n";
 
-        // --------------------------------------------------
-        // FASES 2, 3 e 4: Sintatica + Semantica + Codigo
-        // --------------------------------------------------
+        // FASES 2, 3 e 4: Sintatica + Semantica + Geracao de Codigo
         TabelaDeSimbolos tabela;
         GeradorDeCodigo  gerador;
         Parser parser(tokens, tabela, gerador);
         parser.analisar();
 
-        // Exibir resultados
         tabela.imprimir();
         gerador.imprimir();
         gerador.imprimirImagemDeMemoria(tabela);
-
-        // Exportar arquivo de memoria se solicitado
-        if (argc > 2)
-            gerador.exportarMemoria(argv[2], tabela);
+        gerador.exportarMemoria(arquivoSaida, tabela);
+        gerador.gerarSimulador(nomeExec, tabela);
 
         std::cout << "\nCompilacao concluida com SUCESSO!\n";
+        std::cout << "Execute './" << nomeExec << "' para ver a simulacao verbose.\n";
         std::cout << std::string(W, '=') << "\n\n";
 
     } catch (const std::exception& ex) {
         std::cerr << "\nERRO DE COMPILACAO: " << ex.what() << "\n";
-        return 1;
+        codigoRetorno = 1;
     }
 
-    return 0;
+    return codigoRetorno;
 }
