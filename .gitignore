@@ -1,0 +1,11 @@
+# Compilador
+compiler
+
+# Artefatos gerados
+*.mem
+*.exe
+*.sim.cpp
+
+# Binarios simuladores (sem extensao, exceto arquivos de codigo)
+teste
+exemplo
