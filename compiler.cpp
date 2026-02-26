@@ -470,14 +470,23 @@ public:
 
         f.close();
 
-        // Compila o simulador gerado
-        std::string cmd = "g++ -std=c++17 -O2 -o " + nomeExec + " " + cppFile;
-        if (system(cmd.c_str()) == 0) {
-            std::remove(cppFile.c_str());
-            std::cout << "Simulador gerado:  " << nomeExec << "\n";
-        } else {
-            std::cerr << "Aviso: falha ao compilar simulador (g++ nao encontrado?)\n";
-        }
+        // Compila para Linux
+        std::string cmdLinux = "g++ -std=c++17 -O2 -o " + nomeExec + " " + cppFile;
+        if (system(cmdLinux.c_str()) == 0)
+            std::cout << "Simulador Linux:   " << nomeExec << "\n";
+        else
+            std::cerr << "Aviso: falha ao compilar simulador Linux\n";
+
+        // Compila para Windows (cross-compile via MinGW)
+        std::string exeFile = nomeExec + ".exe";
+        std::string cmdWin  = "x86_64-w64-mingw32-g++ -std=c++17 -O2 -static "
+                              "-o " + exeFile + " " + cppFile;
+        if (system(cmdWin.c_str()) == 0)
+            std::cout << "Simulador Windows: " << exeFile << "\n";
+        else
+            std::cerr << "Aviso: MinGW nao encontrado, .exe nao gerado\n";
+
+        std::remove(cppFile.c_str());
     }
 
 private:
