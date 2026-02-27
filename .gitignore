@@ -10,6 +10,6 @@ compiler
 teste
 exemplo
 
-# Stub build artifacts (gerados pelo make)
+# Stub build artifacts (gerados pelo make — bytes.h sao commitados para portabilidade)
 stub/stub_linux
-stub/stub_linux_bytes.h
+stub/stub_windows.exe

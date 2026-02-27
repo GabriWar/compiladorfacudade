@@ -22,7 +22,10 @@
 #include <iomanip>
 #include <algorithm>
 #include <cstring>     // memset, memcpy
+#include <cstdint>     // int32_t
+#ifndef _WIN32
 #include <sys/stat.h>  // chmod
+#endif
 
 // =============================================================
 // SECAO 1: ANALISE LEXICA
@@ -340,28 +343,42 @@ public:
         std::cout << "Imagem de memoria:  " << arquivo << "\n";
     }
 
-    // Gera um binario nativo Linux que simula a execucao WNEANDER.
+    // Gera binarios nativos (Linux ELF + Windows PE) que simulam a execucao WNEANDER.
     // SEM chamar nenhum compilador externo: escreve o stub pre-compilado
     // (embutido como bytes) e anexa os dados (vars + memoria) no final.
-    // O stub le os proprios dados via /proc/self/exe.
-    void gerarBinario(const std::string& nomeExec,
-                      const TabelaDeSimbolos& tabela) const {
-        // Bytes do stub Linux (gerado em build-time por xxd -i stub_stub_linux)
-        #include "stub/stub_linux_bytes.h"
+    void gerarBinarios(const std::string& nomeBase,
+                       const TabelaDeSimbolos& tabela) const {
+        gerarBinarioLinux(nomeBase, tabela);
+        gerarBinarioWindows(nomeBase + ".exe", tabela);
+    }
 
+    void gerarBinarioLinux(const std::string& nomeExec,
+                           const TabelaDeSimbolos& tabela) const {
+        #include "stub/stub_linux_bytes.h"
+        escreverBinario(nomeExec, stub_stub_linux, stub_stub_linux_len, tabela, true);
+    }
+
+    void gerarBinarioWindows(const std::string& nomeExec,
+                             const TabelaDeSimbolos& tabela) const {
+        #include "stub/stub_windows_bytes.h"
+        escreverBinario(nomeExec, stub_stub_windows_exe, stub_stub_windows_exe_len, tabela, false);
+    }
+
+    void escreverBinario(const std::string& nomeExec,
+                         const unsigned char* stubData, unsigned int stubLen,
+                         const TabelaDeSimbolos& tabela, bool setExecBit) const {
         std::vector<int> mem = construirMemoria(tabela);
 
         std::ofstream f(nomeExec, std::ios::binary);
         if (!f) {
-            std::cerr << "Aviso: nao foi possivel gerar binario\n";
+            std::cerr << "Aviso: nao foi possivel gerar " << nomeExec << "\n";
             return;
         }
 
-        // 1. Escreve o stub ELF
-        f.write(reinterpret_cast<const char*>(stub_stub_linux), stub_stub_linux_len);
+        // 1. Escreve o stub (ELF ou PE)
+        f.write(reinterpret_cast<const char*>(stubData), stubLen);
 
         // 2. Serializa e anexa a tabela de variaveis (32 entradas x 24 bytes = 768 bytes)
-        //    Formato por entrada: int32 addr, int32 name_len, char name[16]
         const int MAX_VARS = 32;
         struct VarEntry { int32_t addr; int32_t name_len; char name[16]; };
 
@@ -384,7 +401,6 @@ public:
             memcpy(vars[idx].name, cname.c_str(), vars[idx].name_len);
             idx++;
         }
-        // Sentinel (addr = -1)
         if (idx < MAX_VARS)
             vars[idx].addr = -1;
 
@@ -397,8 +413,12 @@ public:
 
         f.close();
 
-        // 4. Marca como executavel (chmod +x)
-        chmod(nomeExec.c_str(), 0755);
+#ifndef _WIN32
+        if (setExecBit)
+            chmod(nomeExec.c_str(), 0755);
+#else
+        (void)setExecBit;
+#endif
 
         std::cout << "Simulador gerado:   " << nomeExec << "\n";
     }
@@ -712,10 +732,10 @@ int main(int argc, char* argv[]) {
         gerador.imprimir();
         gerador.imprimirImagemDeMemoria(tabela);
         gerador.exportarMemoria(arquivoSaida, tabela);
-        gerador.gerarBinario(nomeExec, tabela);
+        gerador.gerarBinarios(nomeExec, tabela);
 
         std::cout << "\nCompilacao concluida com SUCESSO!\n";
-        std::cout << "Execute './" << nomeExec << "' para ver a simulacao verbose.\n";
+        std::cout << "Execute './" << nomeExec << "' (Linux) ou '" << nomeExec << ".exe' (Windows) para ver a simulacao verbose.\n";
         std::cout << std::string(W, '=') << "\n\n";
 
     } catch (const std::exception& ex) {
