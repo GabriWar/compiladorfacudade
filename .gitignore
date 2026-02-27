@@ -9,3 +9,7 @@ compiler
 # Binarios simuladores (sem extensao, exceto arquivos de codigo)
 teste
 exemplo
+
+# Stub build artifacts (gerados pelo make)
+stub/stub_linux
+stub/stub_linux_bytes.h

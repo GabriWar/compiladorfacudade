@@ -21,6 +21,8 @@
 #include <cctype>
 #include <iomanip>
 #include <algorithm>
+#include <cstring>     // memset, memcpy
+#include <sys/stat.h>  // chmod
 
 // =============================================================
 // SECAO 1: ANALISE LEXICA
@@ -338,155 +340,67 @@ public:
         std::cout << "Imagem de memoria:  " << arquivo << "\n";
     }
 
-    // Gera um binario nativo que simula a execucao WNEANDER com trace verbose.
-    // Estrategia: gera um .cpp com a memoria embutida + interpretador, depois
-    // chama g++ para compilar. O .cpp intermediario e removido no final.
-    void gerarSimulador(const std::string& nomeExec,
-                        const TabelaDeSimbolos& tabela) const {
+    // Gera um binario nativo Linux que simula a execucao WNEANDER.
+    // SEM chamar nenhum compilador externo: escreve o stub pre-compilado
+    // (embutido como bytes) e anexa os dados (vars + memoria) no final.
+    // O stub le os proprios dados via /proc/self/exe.
+    void gerarBinario(const std::string& nomeExec,
+                      const TabelaDeSimbolos& tabela) const {
+        // Bytes do stub Linux (gerado em build-time por xxd -i stub_stub_linux)
+        #include "stub/stub_linux_bytes.h"
+
         std::vector<int> mem = construirMemoria(tabela);
 
-        std::string cppFile = nomeExec + ".sim.cpp";
-        std::ofstream f(cppFile);
+        std::ofstream f(nomeExec, std::ios::binary);
         if (!f) {
-            std::cerr << "Aviso: nao foi possivel gerar simulador\n";
+            std::cerr << "Aviso: nao foi possivel gerar binario\n";
             return;
         }
 
-        // --- Cabecalho ---
-        f << "#include <iostream>\n"
-          << "#include <iomanip>\n"
-          << "#include <string>\n"
-          << "#include <map>\n\n"
-          << "int main() {\n";
+        // 1. Escreve o stub ELF
+        f.write(reinterpret_cast<const char*>(stub_stub_linux), stub_stub_linux_len);
 
-        // --- Memoria embutida ---
-        f << "    int mem[256] = {};\n";
-        for (int i = 0; i < 256; i++)
-            if (mem[i] != 0)
-                f << "    mem[" << i << "] = " << mem[i] << ";\n";
-        f << "\n";
+        // 2. Serializa e anexa a tabela de variaveis (32 entradas x 24 bytes = 768 bytes)
+        //    Formato por entrada: int32 addr, int32 name_len, char name[16]
+        const int MAX_VARS = 32;
+        struct VarEntry { int32_t addr; int32_t name_len; char name[16]; };
 
-        // --- Tabela de simbolos embutida (para nomes legiveis) ---
-        f << "    std::map<int,std::string> vars = {\n";
-        for (auto& [nome, addr] : tabela.getVars())
-            f << "        {" << addr << ", \"" << nome << "\"},\n";
-        for (auto& [val, addr] : tabela.getConsts())
-            f << "        {" << addr << ", \"CONST_" << val << "\"},\n";
-        f << "    };\n\n";
+        std::vector<VarEntry> vars(MAX_VARS);
+        memset(vars.data(), 0, sizeof(VarEntry) * MAX_VARS);
 
-        // --- Corpo do interpretador WNEANDER (escrito como string literal) ---
-        f << R"WNSIM(
-    auto nomVar = [&](int a) -> std::string {
-        return vars.count(a) ? vars[a] : ("MEM[" + std::to_string(a) + "]");
-    };
-    auto nomeOp = [](int opc) -> std::string {
-        switch(opc) {
-            case 0x10: return "STORE";
-            case 0x20: return "LOAD";
-            case 0x30: return "ADD";
-            case 0x40: return "SUB";
-            case 0x80: return "JMP";
-            case 0xA0: return "JZ";
-            case 0xF0: return "HALT";
-            default:   return "???";
+        int idx = 0;
+        for (auto& [nome, addr] : tabela.getVars()) {
+            if (idx >= MAX_VARS) break;
+            vars[idx].addr = addr;
+            vars[idx].name_len = std::min((int)nome.size(), 15);
+            memcpy(vars[idx].name, nome.c_str(), vars[idx].name_len);
+            idx++;
         }
-    };
-
-    int acc = 0, pc = 0, step = 0;
-
-    std::cout << "\n================================================\n";
-    std::cout << "   SIMULADOR WNEANDER — execucao verbose\n";
-    std::cout << "================================================\n\n";
-    std::cout << std::left
-              << std::setw(6)  << "PC"
-              << std::setw(8)  << "Instr"
-              << std::setw(6)  << "Op"
-              << std::setw(8)  << "ACC"
-              << "Acao\n";
-    std::cout << std::string(52, '-') << "\n";
-
-    while (step++ < 100000) {
-        int opc = mem[pc];
-        bool temOp = (opc != 0xF0);
-        int  op    = temOp ? mem[pc + 1] : 0;
-
-        std::cout << std::setw(6) << pc
-                  << std::setw(8) << nomeOp(opc);
-        if (temOp) std::cout << std::setw(6) << op;
-        else       std::cout << std::setw(6) << "";
-        std::cout << std::setw(8) << acc;
-
-        if (opc == 0xF0) { std::cout << "HALT\n"; break; }
-
-        switch(opc) {
-        case 0x20: { // LOAD
-            int v = mem[op];
-            std::cout << "ACC = " << nomVar(op) << " = " << v << "\n";
-            acc = v; pc += 2; break;
+        for (auto& [val, addr] : tabela.getConsts()) {
+            if (idx >= MAX_VARS) break;
+            std::string cname = "CONST_" + std::to_string(val);
+            vars[idx].addr = addr;
+            vars[idx].name_len = std::min((int)cname.size(), 15);
+            memcpy(vars[idx].name, cname.c_str(), vars[idx].name_len);
+            idx++;
         }
-        case 0x10: { // STORE
-            mem[op] = acc;
-            std::cout << nomVar(op) << " = " << acc << "\n";
-            pc += 2; break;
-        }
-        case 0x30: { // ADD
-            int v = mem[op];
-            std::cout << "ACC = " << acc << " + " << nomVar(op)
-                      << "(" << v << ") = " << (acc + v) << "\n";
-            acc += v; pc += 2; break;
-        }
-        case 0x40: { // SUB
-            int v = mem[op];
-            std::cout << "ACC = " << acc << " - " << nomVar(op)
-                      << "(" << v << ") = " << (acc - v) << "\n";
-            acc -= v; pc += 2; break;
-        }
-        case 0x80: // JMP
-            std::cout << "PC -> " << op << "\n";
-            pc = op; break;
-        case 0xA0: // JZ
-            if (acc == 0) {
-                std::cout << "ACC=0, PC -> " << op << "\n";
-                pc = op;
-            } else {
-                std::cout << "ACC=" << acc << ", nao salta\n";
-                pc += 2;
-            }
-            break;
-        default:
-            std::cout << "instrucao desconhecida (opc=" << opc << ")\n";
-            return 1;
-        }
-    }
+        // Sentinel (addr = -1)
+        if (idx < MAX_VARS)
+            vars[idx].addr = -1;
 
-    std::cout << "\n--- Estado final das variaveis ---\n";
-    for (auto& [a, n] : vars)
-        if (n.rfind("CONST", 0) != 0)
-            std::cout << n << " = " << mem[a] << "\n";
-    std::cout << "\n";
-    return 0;
-}
-)WNSIM";
+        f.write(reinterpret_cast<const char*>(vars.data()), MAX_VARS * sizeof(VarEntry));
+
+        // 3. Serializa e anexa a memoria WNEANDER (256 x int32 = 1024 bytes)
+        std::vector<int32_t> mem32(256, 0);
+        for (int i = 0; i < 256; i++) mem32[i] = static_cast<int32_t>(mem[i]);
+        f.write(reinterpret_cast<const char*>(mem32.data()), 256 * sizeof(int32_t));
 
         f.close();
 
-        // Compila para Linux
-        std::string cmdLinux = "g++ -std=c++17 -O2 -o " + nomeExec + " " + cppFile;
-        if (system(cmdLinux.c_str()) == 0)
-            std::cout << "Simulador Linux:   " << nomeExec << "\n";
-        else
-            std::cerr << "Aviso: falha ao compilar simulador Linux\n";
+        // 4. Marca como executavel (chmod +x)
+        chmod(nomeExec.c_str(), 0755);
 
-        // Compila para Windows (cross-compile via MinGW)
-        std::string exeFile = nomeExec + ".exe";
-        std::string cmdWin  = "x86_64-w64-mingw32-g++ -std=c++17 -O2 -static "
-                              "-o " + exeFile + " " + cppFile;
-        if (system(cmdWin.c_str()) == 0)
-            std::cout << "Simulador Windows: " << exeFile << "\n";
-        else
-            std::cerr << "Aviso: MinGW nao encontrado, .exe nao gerado\n";
-
-        std::remove(cppFile.c_str());
+        std::cout << "Simulador gerado:   " << nomeExec << "\n";
     }
 
 private:
@@ -798,7 +712,7 @@ int main(int argc, char* argv[]) {
         gerador.imprimir();
         gerador.imprimirImagemDeMemoria(tabela);
         gerador.exportarMemoria(arquivoSaida, tabela);
-        gerador.gerarSimulador(nomeExec, tabela);
+        gerador.gerarBinario(nomeExec, tabela);
 
         std::cout << "\nCompilacao concluida com SUCESSO!\n";
         std::cout << "Execute './" << nomeExec << "' para ver a simulacao verbose.\n";
