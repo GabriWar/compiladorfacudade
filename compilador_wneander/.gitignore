@@ -1,0 +1,7 @@
+# Binarios compilados
+compilador
+compilador.exe
+
+# Arquivos gerados pelo compilador hipotetico
+*.asm
+*.mem
