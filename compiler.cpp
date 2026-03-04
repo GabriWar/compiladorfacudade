@@ -1,13 +1,13 @@
 // =============================================================
 // compiler.cpp
-// Compilador Hipotetico -> Maquina WNEANDER
+// Compilador Hipotetico -> Maquina NEANDERWIN
 // Disciplina: Compiladores - Ciencia da Computacao
 //
 // Fases implementadas:
 //   1. Analise Lexica
 //   2. Analise Sintatica (descida recursiva)
 //   3. Analise Semantica (tabela de simbolos)
-//   4. Geracao de Codigo WNEANDER
+//   4. Geracao de Codigo NEANDERWIN
 // =============================================================
 
 #include <iostream>
@@ -227,7 +227,7 @@ struct Instrucao {
     std::string operando;              // endereco numerico ou rotulo simbolico
 };
 
-// Gera instrucoes WNEANDER com rotulos simbolicos
+// Gera instrucoes NEANDERWIN com rotulos simbolicos
 // Resolve rotulos na segunda passagem ao gerar a imagem de memoria
 class GeradorDeCodigo {
 public:
@@ -252,7 +252,7 @@ public:
     void imprimir() const {
         const int W = 48;
         std::cout << "\n" << std::string(W, '=') << "\n";
-        std::cout << "       CODIGO ASSEMBLY WNEANDER GERADO\n";
+        std::cout << "       CODIGO ASSEMBLY NEANDERWIN GERADO\n";
         std::cout << std::string(W, '=') << "\n";
 
         for (auto& i : instrucoes) {
@@ -267,9 +267,9 @@ public:
         std::cout << std::string(W, '=') << "\n";
     }
 
-    // Gera e exibe a imagem numerica de memoria (para o simulador WNEANDER)
+    // Gera e exibe a imagem numerica de memoria (para o simulador NEANDERWIN)
     void imprimirImagemDeMemoria(const TabelaDeSimbolos& tabela) const {
-        // Opcodes WNEANDER (baseado no Neander com extensao SUB)
+        // Opcodes NEANDERWIN (baseado no Neander com extensao SUB)
         // STA=0x10, LDA=0x20, ADD=0x30, SUB=0x40, JMP=0x80, JZ=0xA0, HLT=0xF0
         const std::unordered_map<std::string, int> opcodes = {
             {"STORE", 0x10},
@@ -310,7 +310,7 @@ public:
 
         const int W = 52;
         std::cout << "\n" << std::string(W, '=') << "\n";
-        std::cout << "          IMAGEM DE MEMORIA WNEANDER\n";
+        std::cout << "          IMAGEM DE MEMORIA NEANDERWIN\n";
         std::cout << std::string(W, '=') << "\n";
         std::cout << std::left
                   << std::setw(12) << "Endereco"
@@ -329,21 +329,32 @@ public:
         std::cout << std::string(W, '=') << "\n";
     }
 
-    // Exporta a imagem de memoria como arquivo texto (256 linhas: "endereco valor")
+    // Exporta a imagem de memoria no formato binario NEANDERWIN (.mem)
+    // Formato: 2 bytes header (0x03, 0x00) + 256 x 2 bytes (valor, flag) = 514 bytes
     void exportarMemoria(const std::string& arquivo,
                          const TabelaDeSimbolos& tabela) const {
         std::vector<int> mem = construirMemoria(tabela);
-        std::ofstream f(arquivo);
+        std::ofstream f(arquivo, std::ios::binary);
         if (!f) {
             std::cerr << "Aviso: nao foi possivel criar '" << arquivo << "'\n";
             return;
         }
-        for (int i = 0; i < 256; i++)
-            f << i << " " << mem[i] << "\n";
-        std::cout << "Imagem de memoria:  " << arquivo << "\n";
+        // Header: tipo Neander (0x03) + reservado (0x00)
+        unsigned char header[2] = {0x03, 0x00};
+        f.write(reinterpret_cast<char*>(header), 2);
+
+        // 256 posicoes: cada uma como 2 bytes (valor, flag=0)
+        for (int i = 0; i < 256; i++) {
+            unsigned char val = static_cast<unsigned char>(mem[i] & 0xFF);
+            unsigned char flag = 0x00;
+            f.write(reinterpret_cast<char*>(&val), 1);
+            f.write(reinterpret_cast<char*>(&flag), 1);
+        }
+        f.close();
+        std::cout << "Arquivo NEANDERWIN: " << arquivo << " (514 bytes)\n";
     }
 
-    // Gera binarios nativos (Linux ELF + Windows PE) que simulam a execucao WNEANDER.
+    // Gera binarios nativos (Linux ELF + Windows PE) que simulam a execucao NEANDERWIN.
     // SEM chamar nenhum compilador externo: escreve o stub pre-compilado
     // (embutido como bytes) e anexa os dados (vars + memoria) no final.
     void gerarBinarios(const std::string& nomeBase,
@@ -406,7 +417,7 @@ public:
 
         f.write(reinterpret_cast<const char*>(vars.data()), MAX_VARS * sizeof(VarEntry));
 
-        // 3. Serializa e anexa a memoria WNEANDER (256 x int32 = 1024 bytes)
+        // 3. Serializa e anexa a memoria NEANDERWIN (256 x int32 = 1024 bytes)
         std::vector<int32_t> mem32(256, 0);
         for (int i = 0; i < 256; i++) mem32[i] = static_cast<int32_t>(mem[i]);
         f.write(reinterpret_cast<const char*>(mem32.data()), 256 * sizeof(int32_t));
@@ -463,7 +474,113 @@ private:
 };
 
 // =============================================================
-// SECAO 4: ANALISE SINTATICA + SEMANTICA (descida recursiva)
+// SECAO 4a: AUTOMATO FINITO DETERMINISTICO (AFD)
+// =============================================================
+
+static void imprimirAFD() {
+    const int W = 72;
+    std::cout << "\n" << std::string(W, '=') << "\n";
+    std::cout << "   AUTOMATO FINITO DETERMINISTICO (AFD) - ANALISADOR LEXICO\n";
+    std::cout << std::string(W, '=') << "\n\n";
+
+    std::cout << "Estados:\n";
+    std::cout << "  q0 = Estado inicial\n";
+    std::cout << "  q1 = Lendo identificador/palavra reservada (estado final)\n";
+    std::cout << "  q2 = Lendo numero inteiro (estado final)\n";
+    std::cout << "  q3 = Token '=' reconhecido (estado final)\n";
+    std::cout << "  q4 = Token '+' reconhecido (estado final)\n";
+    std::cout << "  q5 = Token '-' reconhecido (estado final)\n";
+    std::cout << "  qE = Estado de erro (caractere invalido)\n\n";
+
+    std::cout << "Estado inicial: q0\n";
+    std::cout << "Estados de aceitacao: {q1, q2, q3, q4, q5}\n";
+    std::cout << "Alfabeto: {letra, digito, _, =, +, -, espaco, \\n, outro}\n\n";
+
+    std::cout << "Tabela de transicoes:\n";
+    std::cout << std::string(W, '-') << "\n";
+    std::cout << std::left
+              << std::setw(10) << "Estado"
+              << std::setw(12) << "letra/_"
+              << std::setw(10) << "digito"
+              << std::setw(8)  << "="
+              << std::setw(8)  << "+"
+              << std::setw(8)  << "-"
+              << std::setw(10) << "espaco"
+              << "outro\n";
+    std::cout << std::string(W, '-') << "\n";
+    std::cout << std::setw(10) << "q0"
+              << std::setw(12) << "q1"
+              << std::setw(10) << "q2"
+              << std::setw(8)  << "q3*"
+              << std::setw(8)  << "q4*"
+              << std::setw(8)  << "q5*"
+              << std::setw(10) << "q0"
+              << "qE\n";
+    std::cout << std::setw(10) << "q1"
+              << std::setw(12) << "q1"
+              << std::setw(10) << "q1"
+              << std::setw(8)  << "r*"
+              << std::setw(8)  << "r*"
+              << std::setw(8)  << "r*"
+              << std::setw(10) << "r*"
+              << "r*\n";
+    std::cout << std::setw(10) << "q2"
+              << std::setw(12) << "qE"
+              << std::setw(10) << "q2"
+              << std::setw(8)  << "r*"
+              << std::setw(8)  << "r*"
+              << std::setw(8)  << "r*"
+              << std::setw(10) << "r*"
+              << "qE\n";
+    std::cout << std::string(W, '-') << "\n";
+    std::cout << "*  = emite token e retorna a q0\n";
+    std::cout << "r* = retrai entrada (devolve caractere), emite token e retorna a q0\n\n";
+
+    std::cout << "Palavras reservadas (verificadas apos reconhecer identificador em q1):\n";
+    std::cout << "  BEGIN, END, IF, THEN, ENDIF, WHILE, DO, ENDWHILE\n";
+    std::cout << std::string(W, '=') << "\n";
+}
+
+// =============================================================
+// SECAO 4b: ARVORE DE ANALISE SINTATICA
+// =============================================================
+
+struct NoArvore {
+    std::string nome;
+    std::vector<NoArvore*> filhos;
+
+    explicit NoArvore(const std::string& n) : nome(n) {}
+    ~NoArvore() { for (auto* f : filhos) delete f; }
+
+    NoArvore* add(const std::string& n) {
+        auto* f = new NoArvore(n);
+        filhos.push_back(f);
+        return f;
+    }
+
+    NoArvore* add(NoArvore* f) {
+        if (f) filhos.push_back(f);
+        return f;
+    }
+};
+
+static void imprimirArvore(const NoArvore* no,
+                           const std::string& prefixo = "",
+                           bool ultimo = true,
+                           bool raiz = true) {
+    if (!no) return;
+    if (!raiz)
+        std::cout << prefixo << (ultimo ? "└── " : "├── ");
+    std::cout << no->nome << "\n";
+    std::string novoPrefixo = raiz ? "" : (prefixo + (ultimo ? "    " : "│   "));
+    for (size_t i = 0; i < no->filhos.size(); i++) {
+        imprimirArvore(no->filhos[i], novoPrefixo,
+                       i == no->filhos.size() - 1, false);
+    }
+}
+
+// =============================================================
+// SECAO 4c: ANALISE SINTATICA + SEMANTICA (descida recursiva)
 // =============================================================
 //
 // Gramatica (BNF simplificada):
@@ -483,8 +600,9 @@ public:
            GeradorDeCodigo& gerador)
         : tokens(tokens), pos(0), tabela(tabela), gerador(gerador) {}
 
-    void analisar() {
-        parsePrograma();
+    // Analisa o programa e retorna a arvore sintatica
+    NoArvore* analisar() {
+        return parsePrograma();
     }
 
 private:
@@ -506,32 +624,38 @@ private:
     }
 
     // programa -> BEGIN lista_cmds END
-    void parsePrograma() {
+    NoArvore* parsePrograma() {
+        auto* no = new NoArvore("Programa");
+        no->add("BEGIN");
         consumir(TipoToken::BEGIN);
-        parseListaCmds();
+        no->add(parseListaCmds());
         consumir(TipoToken::END);
+        no->add("END");
         gerador.emitir("HALT");
 
         if (atual().tipo != TipoToken::FIM)
             throw std::runtime_error(
                 "Tokens inesperados apos END na linha " +
                 std::to_string(atual().linha));
+        return no;
     }
 
     // lista_cmds -> cmd lista_cmds | vazio
-    void parseListaCmds() {
+    NoArvore* parseListaCmds() {
+        auto* no = new NoArvore("ListaCmds");
         while (atual().tipo == TipoToken::IDENTIFICADOR ||
                atual().tipo == TipoToken::IF ||
                atual().tipo == TipoToken::WHILE) {
-            parseCmd();
+            no->add(parseCmd());
         }
+        return no;
     }
 
     // cmd -> atrib | se | enquanto
-    void parseCmd() {
-        if      (atual().tipo == TipoToken::IDENTIFICADOR) parseAtrib();
-        else if (atual().tipo == TipoToken::IF)            parseSe();
-        else if (atual().tipo == TipoToken::WHILE)         parseEnquanto();
+    NoArvore* parseCmd() {
+        if      (atual().tipo == TipoToken::IDENTIFICADOR) return parseAtrib();
+        else if (atual().tipo == TipoToken::IF)            return parseSe();
+        else if (atual().tipo == TipoToken::WHILE)         return parseEnquanto();
         else
             throw std::runtime_error(
                 "Erro sintatico na linha " + std::to_string(atual().linha) +
@@ -540,27 +664,31 @@ private:
 
     // atrib -> ID = expr
     // expr  -> termo (('+' | '-') termo)*
-    void parseAtrib() {
+    NoArvore* parseAtrib() {
+        auto* no = new NoArvore("Atrib");
         Token dest = consumir(TipoToken::IDENTIFICADOR);
+        no->add(dest.valor);
         consumir(TipoToken::ATRIBUICAO);
+        no->add("=");
 
-        // Carrega primeiro termo no acumulador
+        auto* expr = new NoArvore("Expr");
+        expr->add(atual().valor);
         gerador.emitir("LOAD", enderecoTermo());
 
-        // Operacoes adicionais (soma ou subtracao)
         while (atual().tipo == TipoToken::MAIS ||
                atual().tipo == TipoToken::MENOS) {
             bool soma = (atual().tipo == TipoToken::MAIS);
+            expr->add(soma ? "+" : "-");
             pos++;
+            expr->add(atual().valor);
             gerador.emitir(soma ? "ADD" : "SUB", enderecoTermo());
         }
 
-        // Armazena resultado na variavel destino
+        no->add(expr);
         gerador.emitir("STORE", std::to_string(tabela.obterVar(dest.valor)));
+        return no;
     }
 
-    // Retorna (como string) o endereco de memoria do proximo termo,
-    // consumindo o token sem emitir instrucao de carga
     std::string enderecoTermo() {
         if (atual().tipo == TipoToken::IDENTIFICADOR) {
             Token t = consumir(TipoToken::IDENTIFICADOR);
@@ -576,61 +704,51 @@ private:
     }
 
     // se -> IF ID THEN lista_cmds ENDIF
-    //
-    // Codigo gerado:
-    //     LOAD  <cond>
-    //     JZ    ENDIF_n
-    //     <corpo>
-    // ENDIF_n:
-    //     <proxima instrucao>
-    void parseSe() {
+    NoArvore* parseSe() {
+        auto* no = new NoArvore("If");
         consumir(TipoToken::IF);
+        no->add("IF");
         Token cond = consumir(TipoToken::IDENTIFICADOR);
+        no->add(cond.valor);
         consumir(TipoToken::THEN);
+        no->add("THEN");
 
         std::string rotEndif = gerador.novoRotulo("ENDIF");
-
         gerador.emitir("LOAD", std::to_string(tabela.obterVar(cond.valor)));
         gerador.emitir("JZ",   rotEndif);
 
-        parseListaCmds();
+        no->add(parseListaCmds());
 
         consumir(TipoToken::ENDIF);
-
-        // O proximo emit (do proprio corpo, proxima instrucao ou HALT) recebe o rotulo
+        no->add("ENDIF");
         gerador.definirRotulo(rotEndif);
+        return no;
     }
 
     // enquanto -> WHILE ID DO lista_cmds ENDWHILE
-    //
-    // Codigo gerado:
-    // WHILE_n:
-    //     LOAD  <cond>
-    //     JZ    ENDWHILE_m
-    //     <corpo>
-    //     JMP   WHILE_n
-    // ENDWHILE_m:
-    //     <proxima instrucao>
-    void parseEnquanto() {
+    NoArvore* parseEnquanto() {
+        auto* no = new NoArvore("While");
         consumir(TipoToken::WHILE);
+        no->add("WHILE");
         Token cond = consumir(TipoToken::IDENTIFICADOR);
+        no->add(cond.valor);
         consumir(TipoToken::DO);
+        no->add("DO");
 
         std::string rotIni = gerador.novoRotulo("WHILE");
         std::string rotFim = gerador.novoRotulo("ENDWHILE");
 
-        // LOAD recebe o rotulo de inicio do laco
         gerador.definirRotulo(rotIni);
         gerador.emitir("LOAD", std::to_string(tabela.obterVar(cond.valor)));
         gerador.emitir("JZ",   rotFim);
 
-        parseListaCmds();
+        no->add(parseListaCmds());
 
         consumir(TipoToken::ENDWHILE);
-
+        no->add("ENDWHILE");
         gerador.emitir("JMP", rotIni);
-        // A proxima instrucao recebe o rotulo de saida do laco
         gerador.definirRotulo(rotFim);
+        return no;
     }
 };
 
@@ -693,7 +811,7 @@ int main(int argc, char* argv[]) {
 
     const int W = 52;
     std::cout << "\n" << std::string(W, '=') << "\n";
-    std::cout << "    COMPILADOR HIPOTETICO -> WNEANDER\n";
+    std::cout << "    COMPILADOR HIPOTETICO -> NEANDERWIN\n";
     std::cout << "    Disciplina: Compiladores\n";
     std::cout << std::string(W, '=') << "\n";
     std::cout << "\n=== CODIGO FONTE (" << nomeArquivo << ") ===\n";
@@ -722,17 +840,30 @@ int main(int argc, char* argv[]) {
         }
         std::cout << std::string(W, '=') << "\n";
 
+        // AFD do analisador lexico
+        imprimirAFD();
+
         // FASES 2, 3 e 4: Sintatica + Semantica + Geracao de Codigo
         TabelaDeSimbolos tabela;
         GeradorDeCodigo  gerador;
         Parser parser(tokens, tabela, gerador);
-        parser.analisar();
+        NoArvore* arvore = parser.analisar();
+
+        // Arvore de analise sintatica
+        const int W2 = 52;
+        std::cout << "\n" << std::string(W2, '=') << "\n";
+        std::cout << "       ARVORE DE ANALISE SINTATICA\n";
+        std::cout << std::string(W2, '=') << "\n";
+        imprimirArvore(arvore);
+        std::cout << std::string(W2, '=') << "\n";
 
         tabela.imprimir();
         gerador.imprimir();
         gerador.imprimirImagemDeMemoria(tabela);
         gerador.exportarMemoria(arquivoSaida, tabela);
         gerador.gerarBinarios(nomeExec, tabela);
+
+        delete arvore;
 
         std::cout << "\nCompilacao concluida com SUCESSO!\n";
         std::cout << "Execute './" << nomeExec << "' (Linux) ou '" << nomeExec << ".exe' (Windows) para ver a simulacao verbose.\n";

@@ -1,6 +1,6 @@
 // ============================================================
 // stub_windows.c
-// Interpretador WNEANDER standalone — ZERO dependencia de CRT/MSVCRT
+// Interpretador NEANDERWIN standalone — ZERO dependencia de CRT/MSVCRT
 // Usa apenas kernel32.dll (Win32 API)
 //
 // Cross-compilacao (Linux → Windows via MinGW):
@@ -81,7 +81,7 @@ static void w_str_w(const char* s, int sl, int w) {
     for (int i = sl; i < w; i++) w_ch(' ');
 }
 
-// ---------- Dados WNEANDER ----------
+// ---------- Dados NEANDERWIN ----------
 #define MAX_VARS 32
 
 typedef struct { i32 addr; i32 name_len; char name[16]; } VarEntry;
@@ -141,7 +141,7 @@ void __stdcall mainCRTStartup(void) {
     load_data();
 
     w_str("\n================================================\n"
-          "   SIMULADOR WNEANDER - execucao verbose\n"
+          "   SIMULADOR NEANDERWIN - execucao verbose\n"
           "================================================\n\n"
           "PC    Instr   Op    ACC     Acao\n"
           "----------------------------------------------------\n");

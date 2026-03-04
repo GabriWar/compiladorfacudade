@@ -1,6 +1,6 @@
 // ============================================================
 // stub_linux.c
-// Interpretador WNEANDER standalone — ZERO dependencia de libc
+// Interpretador NEANDERWIN standalone — ZERO dependencia de libc
 // Usa apenas syscalls Linux x86-64
 //
 // Compilacao:
@@ -71,7 +71,7 @@ static void w_str_w(const char* s, int sl, int w) {
     for (int i = sl; i < w; i++) w_ch(' ');
 }
 
-// ---------- Dados WNEANDER (lidos do final do proprio binario) ----------
+// ---------- Dados NEANDERWIN (lidos do final do proprio binario) ----------
 #define MAX_VARS 32
 
 typedef struct { i32 addr; i32 name_len; char name[16]; } VarEntry;
@@ -120,7 +120,7 @@ void _start(void) {
     load_data();
 
     w_str("\n================================================\n"
-          "   SIMULADOR WNEANDER - execucao verbose\n"
+          "   SIMULADOR NEANDERWIN - execucao verbose\n"
           "================================================\n\n"
           "PC    Instr   Op    ACC     Acao\n"
           "----------------------------------------------------\n");
